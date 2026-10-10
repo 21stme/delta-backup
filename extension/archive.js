@@ -1,8 +1,8 @@
 import { VERSION, capturePath, safeName, statusLabel, reasons } from './core.js';
 
-function historyVisitDate(lastVisitTime) {
-  if (!Number.isFinite(lastVisitTime) || lastVisitTime <= 0) return 'Дата неизвестна';
-  const date = new Date(lastVisitTime);
+function visitDate(visitTime) {
+  if (!Number.isFinite(visitTime) || visitTime <= 0) return 'Дата неизвестна';
+  const date = new Date(visitTime);
   const year = date.getFullYear();
   if (!Number.isFinite(date.getTime()) || year > 9999) return 'Дата неизвестна';
   // Use the same browser-local calendar day as the history list, not UTC.
@@ -46,7 +46,8 @@ export async function archiveFiles(run, readCapture) {
       }
       report.entries[index].textFile = `${folder}/${textFile}`;
       const fromHistory = (entry.source || run.source) === 'history';
-      const clean = cleanTextFile(capture.text, entry.title, usedCleanNames, fromHistory ? historyVisitDate(entry.lastVisitTime) : '');
+      const datePrefix = fromHistory ? visitDate(entry.lastVisitTime) : run.settings?.firstVisitDate ? visitDate(entry.firstVisitTime) : '';
+      const clean = cleanTextFile(capture.text, entry.title, usedCleanNames, datePrefix);
       files.push({ name: clean.name, data: clean.data });
       report.entries[index].cleanFile = clean.name;
       report.entries[index].cleanTitle = clean.title;

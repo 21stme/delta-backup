@@ -119,3 +119,64 @@ export function historyLinkFiles(result) {
     { name: 'README.txt', data: 'Ссылки Delta из доступной истории браузера.\nПериод и полнота поиска: history-links.json.\nЭто список URL, а не сохранённое содержимое страниц. Для получения текста запустите бэкап выбранных ссылок.\nИстория не хранит прошлые версии документа; бэкап получает текущий текст.\n' }
   ];
 }
+
+// Only query the exact URLs of this inventory, before backup reads or reloads.
+// This is the earliest available visit, not the creation time of the current tab.
+export async function collectFirstVisits(entries, getVisits, options = {}) {
+  const { concurrency = 3, callTimeoutMs = 15000, maxDurationMs = 120000,
+    cancelled = () => false, onProgress = async () => {}, now = Date.now,
+    unavailableReason = 'api_unavailable' } = options;
+  const started = now();
+  const results = new Map();
+  const known = entry => ['found', 'not_found'].includes(entry.firstVisitLookup?.status);
+  for (const entry of entries) if (known(entry)) results.set(entry.url, {
+    firstVisitTime: entry.firstVisitTime, firstVisitLookup: structuredClone(entry.firstVisitLookup)
+  });
+  const urls = [...new Set(entries.filter(entry => !results.has(entry.url)).map(entry => entry.url))];
+  let cursor = 0, completed = 0, calls = 0;
+  await Promise.all(Array.from({ length: Math.min(urls.length, Math.max(1, Math.min(10, Math.floor(concurrency) || 1))) }, async () => {
+    while (cursor < urls.length) {
+      const url = urls[cursor++];
+      let status, firstVisitTime, timer;
+      if (!isDelta(url)) status = 'invalid_url';
+      else if (cancelled()) status = 'cancelled';
+      else if (now() - started >= maxDurationMs) status = 'time_limit';
+      else if (typeof getVisits !== 'function') status = unavailableReason;
+      else {
+        calls++;
+        try {
+          const remaining = maxDurationMs - (now() - started);
+          const deadlineStatus = remaining <= callTimeoutMs ? 'time_limit' : 'timeout';
+          const visits = await Promise.race([
+            Promise.resolve().then(() => getVisits({ url })),
+            new Promise((resolve, reject) => { timer = setTimeout(() => reject(new Error(deadlineStatus)), Math.max(1, Math.min(callTimeoutMs, remaining))); })
+          ]);
+          if (!Array.isArray(visits)) throw new Error('invalid_response');
+          for (const visit of visits) {
+            const time = visit?.visitTime;
+            if (Number.isFinite(time) && time > 0 && time <= started && Number.isFinite(new Date(time).getTime()) && (!firstVisitTime || time < firstVisitTime)) firstVisitTime = time;
+          }
+          status = firstVisitTime ? 'found' : visits.length ? 'invalid_response' : 'not_found';
+        } catch (error) {
+          status = ['timeout', 'time_limit', 'invalid_response'].includes(error?.message) ? error.message : 'api_error';
+        } finally { clearTimeout(timer); }
+      }
+      results.set(url, { firstVisitTime, firstVisitLookup: { status, checkedAt: new Date(now()).toISOString(), source: 'available_browser_history' } });
+      completed++;
+      await onProgress({ completed, total: urls.length });
+    }
+  }));
+  const enriched = entries.map(entry => ({ ...entry, ...results.get(entry.url) }));
+  return {
+    entries: enriched, checkedAt: new Date(now()).toISOString(), calls,
+    coverage: enriched.every(known) ? 'complete' : 'partial',
+    scope: 'earliest available visit for exact open-tab URLs; not tab creation time or guaranteed first-ever visit'
+  };
+}
+
+export const firstVisitLimitations = {
+  not_found: 'В доступной истории нет визитов этой ссылки', invalid_response: 'История не вернула корректное время визита',
+  api_error: 'Не удалось прочитать визиты этой ссылки', api_unavailable: 'Браузер не предоставляет API визитов',
+  permission_denied: 'Нет разрешения на чтение истории', timeout: 'Истёк лимит запроса визитов',
+  time_limit: 'Истёк общий лимит поиска дат', cancelled: 'Поиск даты приостановлен', invalid_url: 'Адрес не относится к Delta'
+};

@@ -16,7 +16,7 @@
     <section class="card launch-card" aria-labelledby="launchTitle">
       <div class="section-heading"><h2 id="launchTitle">Новый бэкап</h2><button id="settingsToggle" class="secondary" aria-expanded="false" aria-controls="settingsPanel">Настройки</button></div>
       <div class="source-tabs" role="group" aria-label="Источник нового бэкапа"><button id="sourceTabs" aria-pressed="true">Открытые вкладки</button><button id="sourceHistory" aria-pressed="false">История браузера</button></div>
-      <div id="openSource"><p class="source-description">Все открытые вкладки Delta в этом профиле, включая другие окна и группы.</p></div>
+      <div id="openSource"><p class="source-description">Все открытые вкладки Delta в этом профиле, включая другие окна и группы.</p><label class="date-option"><span><input id="firstVisitDate" type="checkbox">Добавлять дату первого известного визита в имена MD</span><small>YYYY-MM-DD — из доступной истории браузера. Это не дата создания вкладки. Без даты — «Дата неизвестна». При включении потребуется доступ к истории.</small></label></div>
       <div id="historySource" hidden>
         <p class="source-description">Найдите ссылки и выберите документы. Сохраняется текущий текст, а не версия на дату визита.</p>
         <div class="history-search"><label>Период истории<select id="historyRange"><option value="all">Вся доступная история</option><option value="7">Последние 7 дней</option><option value="30">Последние 30 дней</option><option value="90">Последние 90 дней</option><option value="custom">Свой период</option></select></label><button id="historyScan" class="secondary">Найти ссылки Delta</button><button id="historySearchStop" class="secondary" hidden disabled>Остановить поиск</button></div>
@@ -24,7 +24,7 @@
         <p id="historySummary" class="hint" role="status">Поиск ещё не запускался.</p>
         <div id="historySelection" class="actions" hidden><button id="historySelectAll" class="text-button" disabled>Выбрать все</button><button id="historySelectNone" class="text-button" disabled>Снять выбор</button><button id="historyExport" class="text-button" disabled>Выгрузить список URL</button></div>
         <div id="historyLinks" class="history-links"></div><p id="historyDownloadStatus" class="hint" role="status"></p>
-        <details class="compact-help"><summary>Доступ к истории</summary><p class="hint">При поиске браузер запрашивает доступ к истории профиля. Расширение сохраняет только ссылки точного домена delta.yandex-team.ru. Для открытых вкладок это разрешение не требуется.</p></details>
+        <details class="compact-help"><summary>Доступ к истории</summary><p class="hint">При поиске браузер запрашивает доступ к истории профиля. Расширение сохраняет только ссылки точного домена delta.yandex-team.ru. Для открытых вкладок это разрешение требуется только при включённой дате первого известного визита.</p></details>
       </div>
       <div class="launch-row"><label class="concurrency-field">Страниц одновременно<input id="concurrency" type="number" value="3" min="1" max="10"></label><div class="launch-action"><button id="start">Начать бэкап вкладок</button><button id="historyBackup" hidden disabled>Бэкап выбранных ссылок</button><span class="hint">Чтение идёт в фоне. Оставьте эту панель открытой.</span></div></div>
       <p id="settingsSummary" class="settings-summary"></p>
@@ -70,7 +70,7 @@
         <a href="https://github.com/21stme/delta-backup" target="_blank" rel="noopener noreferrer">Исходники</a>
         <a href="https://github.com/21stme/delta-backup/issues/new/choose" target="_blank" rel="noopener noreferrer">Сообщить об ошибке <span aria-hidden="true">↗</span></a>
       </nav>
-      <span class="contact-version" id="extensionVersion">v1.5.1</span>
+      <span class="contact-version" id="extensionVersion">v1.6.0</span>
     </footer>
   </main>
   <script type="module" src="dashboard.js"></script>

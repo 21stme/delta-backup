@@ -1,5 +1,5 @@
 export const ORIGIN = 'https://delta.yandex-team.ru';
-export const VERSION = '1.5.1';
+export const VERSION = '1.6.0';
 export function isDelta(url) {
   try { return new URL(url).origin === ORIGIN; } catch { return false; }
 }

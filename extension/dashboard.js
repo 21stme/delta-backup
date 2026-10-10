@@ -7,7 +7,7 @@ import { createZip } from './zip.js';
 import { runBatch, createRunWriter } from './queue.js';
 import { restartBackup } from './restart.js';
 import { goToOriginalTab } from './navigation.js';
-import { historyPeriod, discoverHistory, historyEntries, withHistoryTab, historyLimitations, historyLinkFiles } from './browser-history.js';
+import { historyPeriod, discoverHistory, historyEntries, withHistoryTab, historyLimitations, historyLinkFiles, collectFirstVisits, firstVisitLimitations } from './browser-history.js';
 
 const $ = id => document.getElementById(id);
 const api = makeChromeAdapter();
@@ -29,11 +29,13 @@ let historyResult;
 let selectedHistory = new Set();
 let scanningHistory = false;
 let cancelHistory = false;
+let requestingFirstVisitAccess = false;
 const fail = error => { $('error').textContent = error?.message || String(error); };
 
 function getSettings() {
   const settings = {};
   for (const id of settingIds) settings[id] = $(id).value.trim();
+  settings.firstVisitDate = $('firstVisitDate').checked;
   for (const [id, low, high] of [['timeout', 10, 1800], ['stable', 3, 120], ['retries', 0, 5], ['maxReloads', 0, 5], ['concurrency', 1, 10]]) {
     const value = Number(settings[id]);
     if (!Number.isInteger(value) || value < low || value > high) throw new Error(`Проверьте настройку «${$(id).parentElement.firstChild.textContent.trim()}».`);
@@ -49,6 +51,7 @@ function getSettings() {
 }
 
 function showSettings(settings) {
+  $('firstVisitDate').checked = settings.firstVisitDate === true;
   for (const id of settingIds) {
     $(id).value = settings[id] ?? (({ timeout: 15, stable: 3, retries: 1, maxReloads: 3, concurrency: 3 })[id] ?? '');
   }
@@ -56,7 +59,7 @@ function showSettings(settings) {
 
 function updateControls() {
   const counts = pageCounts(run?.entries);
-  const backupRunning = working && activity === 'backup';
+  const backupRunning = working && ['backup', 'dates'].includes(activity);
   const canResume = run && run.state !== 'finished' && nextEntry(run);
   $('openSource').hidden = sourceMode !== 'open_tabs';
   $('historySource').hidden = sourceMode !== 'history';
@@ -64,17 +67,17 @@ function updateControls() {
   $('historyBackup').hidden = sourceMode !== 'history';
   $('sourceTabs').setAttribute('aria-pressed', String(sourceMode === 'open_tabs'));
   $('sourceHistory').setAttribute('aria-pressed', String(sourceMode === 'history'));
-  $('sourceTabs').disabled = $('sourceHistory').disabled = working;
-  $('start').disabled = working;
+  $('sourceTabs').disabled = $('sourceHistory').disabled = working || requestingFirstVisitAccess;
+  $('start').disabled = working || requestingFirstVisitAccess;
   $('restart').hidden = !run || working;
-  $('restart').disabled = working || !run;
+  $('restart').disabled = working || requestingFirstVisitAccess || !run;
   $('pause').hidden = !backupRunning;
   $('pause').disabled = !backupRunning || pauseRequested;
   $('pause').textContent = pauseRequested ? 'Завершаю шаг…' : 'Приостановить';
   $('resume').hidden = working || !canResume;
-  $('resume').disabled = working || !canResume;
+  $('resume').disabled = working || requestingFirstVisitAccess || !canResume;
   $('retryFailed').hidden = working || !counts.retryable;
-  $('retryFailed').disabled = working || !counts.retryable;
+  $('retryFailed').disabled = working || requestingFirstVisitAccess || !counts.retryable;
   $('retryFailed').textContent = `Повторить неудачные · ${counts.retryable}`;
   $('export').disabled = working || !run;
   $('history').disabled = working || !run;
@@ -92,6 +95,7 @@ function updateControls() {
   for (const id of ['historyRange', 'historyFrom', 'historyTo']) $(id).disabled = working;
   for (const checkbox of $('historyLinks').querySelectorAll('input')) checkbox.disabled = working;
   for (const id of settingIds) $(id).disabled = working;
+  $('firstVisitDate').disabled = working || requestingFirstVisitAccess;
   $('settingsSummary').textContent = `Ожидание ${$('timeout').value || '—'} с · Без изменений ${$('stable').value || '—'} с · Повторов ${$('retries').value || '0'} · Перезагрузок ${$('maxReloads').value || '0'}`;
   for (const [id, value] of [['filterAll', 'all'], ['filterSaved', 'saved'], ['filterProblems', 'problems']]) {
     $(id).disabled = !run;
@@ -116,7 +120,7 @@ function render(full = true) {
   const currentOption = [...$('history').options].find(option => option.value === run.id);
   if (currentOption) currentOption.textContent = backupLabel(run);
   $('runContext').textContent = `Бэкап · ${run.source === 'history' ? 'из истории' : 'открытые вкладки'} · ${new Date(run.createdAt).toLocaleString('ru-RU')}`;
-  $('status').textContent = activity === 'export' ? 'Готовлю ZIP' : activity === 'backup' ? (pauseRequested ? 'Завершаю текущий шаг…' : 'Читаю страницы Delta') : run.state === 'finished' ? 'Обход завершён' : 'Бэкап приостановлен';
+  $('status').textContent = activity === 'export' ? 'Готовлю ZIP' : activity === 'dates' ? (pauseRequested ? 'Завершаю поиск дат…' : 'Ищу даты первых известных визитов') : activity === 'backup' ? (pauseRequested ? 'Завершаю текущий шаг…' : 'Читаю страницы Delta') : run.state === 'finished' ? 'Обход завершён' : 'Бэкап приостановлен';
   for (const [id, field] of [['countSaved', 'saved'], ['countReading', 'reading'], ['countPending', 'pending'], ['countProblems', 'problems']]) {
     $(id).textContent = counts[field].toLocaleString('ru-RU');
     $(id).parentElement.classList.toggle('is-zero', counts[field] === 0);
@@ -125,7 +129,7 @@ function render(full = true) {
   $('runTotal').textContent = `Страниц в бэкапе: ${counts.total}`;
   $('runProgress').max = counts.total || 1;
   $('runProgress').value = counts.processed;
-  $('liveDetails').hidden = activity !== 'backup' || !detail;
+  $('liveDetails').hidden = !['backup', 'dates'].includes(activity) || !detail;
   $('progressDetails').textContent = detail;
   $('filterAll').textContent = `Все · ${counts.total}`;
   $('filterSaved').textContent = `Сохранённые · ${counts.saved}`;
@@ -146,6 +150,13 @@ function render(full = true) {
     const url = document.createElement('small'); url.className = 'document-url'; url.textContent = entry.url;
     const attempts = document.createElement('small'); attempts.textContent = `Попыток: ${entry.attempts || 0} · Перезагрузок: ${entry.reloadEvents?.length || 0}`;
     rowDetails.append(summary, url, attempts);
+    if ((entry.source || run.source) !== 'history' && run.settings.firstVisitDate) {
+      const visit = document.createElement('small');
+      const date = entry.firstVisitTime ? new Date(entry.firstVisitTime).toLocaleString('ru-RU') : 'неизвестен';
+      const reason = firstVisitLimitations[entry.firstVisitLookup?.status];
+      visit.textContent = `Первый известный визит: ${date}${reason ? ' · ' + reason : ''}`;
+      rowDetails.append(visit);
+    }
     const key = `${run.id}/${entry.id || entry.tabId || entry.index}`;
     rowDetails.open = expandedRows.has(key);
     rowDetails.addEventListener('toggle', () => { if (rowDetails.open) expandedRows.add(key); else expandedRows.delete(key); });
@@ -279,8 +290,26 @@ async function runLoop() {
   }
 }
 
+async function prepareFirstVisits() {
+  if (run.source === 'history' || !run.settings.firstVisitDate) return;
+  activity = 'dates'; detail = ''; render();
+  let allowed = false;
+  try { allowed = await chrome.permissions.contains({ permissions: ['history'] }); } catch {}
+  const getVisits = allowed && typeof chrome.history?.getVisits === 'function' ? props => chrome.history.getVisits(props) : undefined;
+  const result = await collectFirstVisits(run.entries, getVisits, {
+    concurrency: run.settings.concurrency, cancelled: () => pauseRequested,
+    unavailableReason: allowed ? 'api_unavailable' : 'permission_denied',
+    onProgress: async progress => { detail = `Даты проверены: ${progress.completed} из ${progress.total} уникальных ссылок`; render(false); }
+  });
+  run.entries = result.entries;
+  const { entries, ...summary } = result;
+  run.firstVisitDates = summary;
+  await saveRun(run);
+  activity = 'backup'; detail = ''; render();
+}
+
 async function begin(mode) {
-  if (working) return;
+  if (working || requestingFirstVisitAccess) return;
   $('error').textContent = ''; $('archiveStatus').textContent = ''; pauseRequested = false; working = true; activity = 'backup'; updateControls();
   try {
     await withLock(async () => {
@@ -316,7 +345,7 @@ async function begin(mode) {
         for (const entry of run.entries) if (entry.status === 'waiting') { entry.status = 'pending'; entry.attempts = Math.max(0, entry.attempts - 1); }
       }
       if (['new', 'restart', 'history'].includes(mode)) resetResultView();
-      showSettings(run.settings); await refreshHistory(); await runLoop();
+      showSettings(run.settings); await refreshHistory(); await prepareFirstVisits(); await runLoop();
     });
   } catch (error) {
     fail(error);
@@ -453,6 +482,15 @@ $('settingsToggle').addEventListener('click', () => {
 });
 $('sourceTabs').addEventListener('click', () => { sourceMode = 'open_tabs'; updateControls(); });
 $('sourceHistory').addEventListener('click', () => { sourceMode = 'history'; updateControls(); });
+$('firstVisitDate').addEventListener('change', async () => {
+  if (!$('firstVisitDate').checked) return;
+  requestingFirstVisitAccess = true; updateControls();
+  try {
+    // Request directly from the user gesture, before any history API call.
+    if (!await chrome.permissions.request({ permissions: ['history'] })) throw new Error('Доступ к истории не выдан. Даты первых визитов выключены; бэкап вкладок доступен.');
+  } catch (error) { $('firstVisitDate').checked = false; fail(error); }
+  finally { requestingFirstVisitAccess = false; updateControls(); }
+});
 for (const [id, filter] of [['filterAll', 'all'], ['filterSaved', 'saved'], ['filterProblems', 'problems']]) $(id).addEventListener('click', () => { resultFilter = filter; render(); });
 $('resultSearch').addEventListener('input', () => { searchQuery = $('resultSearch').value; render(); });
 for (const id of settingIds) $(id).addEventListener('input', updateControls);
@@ -476,7 +514,7 @@ $('history').addEventListener('change', async () => {
 async function init() {
   $('extensionVersion').textContent = `v${VERSION}`;
   const runs = await listRuns();
-  if (runs.length) run = runs[0];
+  if (runs.length) { run = runs[0]; showSettings(run.settings); }
   await refreshHistory(); render();
   try { if (await chrome.permissions.contains({ permissions: ['tabGroups'] })) $('groups').textContent = 'Названия групп разрешены'; } catch {}
 }
