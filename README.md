@@ -1,6 +1,8 @@
-# Delta Backup
+# <img src="docs/images/icon.png" alt="" width="32" height="32"> Delta Backup
 
-Локальный бэкап текстов открытых вкладок [Delta](https://delta.yandex-team.ru/) для Яндекс Браузера и Google Chrome. Автор — **[21stme@](https://github.com/21stme)**. Текущая версия: **1.4.1**.
+Локальный бэкап текстов открытых вкладок [Delta](https://delta.yandex-team.ru/) для Яндекс Браузера и Google Chrome. Текущая версия: **1.4.2**.
+
+![Панель Delta Backup на синтетических данных](docs/images/dashboard.png)
 
 ## Что умеет
 
@@ -58,7 +60,7 @@ npm test
 npm run build
 ```
 
-Сборка появится в `dist/delta-backup-extension-1.4.1.zip`. Скрипт проверяет версии, CRC и совпадение файлов с исходниками. В архив включается только расширение и пользовательская документация.
+Сборка появится в `dist/delta-backup-extension-1.4.2.zip`. Скрипт проверяет версии, CRC и совпадение файлов с исходниками. В архив включается только расширение и пользовательская документация.
 
 ```text
 extension/   Manifest V3, панель, сборщик, очередь и ZIP
@@ -77,3 +79,7 @@ scripts/    сборка ZIP
 В багрепорте укажите браузер, версию расширения, настройки и шаги воспроизведения. Используйте обезличенные или синтетические примеры; не прикладывайте рабочие тексты Delta, URL закрытых документов или ZIP с ними.
 
 Изменения версий — в [CHANGELOG.md](CHANGELOG.md).
+
+## Лицензия
+
+[MIT](LICENSE) · Copyright © 2026 [21stme](https://github.com/21stme).

@@ -4,6 +4,7 @@ from pathlib import Path
 import json
 import re
 import zipfile
+import struct
 
 root = Path(__file__).resolve().parent.parent
 extension = root / 'extension'
@@ -17,14 +18,18 @@ if version != package['version'] or version != core_version:
 
 # Explicit sources exclude browser data, tests, credentials and generated artifacts.
 files = {}
-for path in sorted(extension.iterdir()):
-    if path.is_file() and (path.suffix in {'.js', '.css', '.html'} or path.name == 'manifest.json'):
-        files[path.name] = path.read_bytes()
-for name in ['README.md', 'CHANGELOG.md']:
+for path in sorted(extension.rglob('*')):
+    if path.is_file() and (path.suffix in {'.js', '.css', '.html', '.png', '.svg'} or path.name == 'manifest.json'):
+        files[str(path.relative_to(extension))] = path.read_bytes()
+for size, icon in manifest.get('icons', {}).items():
+    data = files[icon]
+    if data[:8] != b'\x89PNG\r\n\x1a\n' or struct.unpack('>II', data[16:24]) != (int(size), int(size)):
+        raise SystemExit(f'Invalid icon size: {icon}')
+for name in ['README.md', 'CHANGELOG.md', 'LICENSE']:
     files[name] = (root / name).read_bytes()
-for path in sorted((root / 'docs').iterdir()):
-    if path.is_file() and path.suffix in {'.md', '.txt'}:
-        files[f'docs/{path.name}'] = path.read_bytes()
+for path in sorted((root / 'docs').rglob('*')):
+    if path.is_file() and path.suffix in {'.md', '.txt', '.png'}:
+        files[str(path.relative_to(root))] = path.read_bytes()
 files['УСТАНОВКА.txt'] = (root / 'docs' / 'УСТАНОВКА.txt').read_bytes()
 
 output = root / 'dist' / f'delta-backup-extension-{version}.zip'
