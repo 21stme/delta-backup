@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { writeFile } from 'node:fs/promises';
+import { createZip } from '../extension/zip.js';
 import { discoverHistory, historyPeriod, historyEntries, withHistoryTab, historyLinkFiles } from '../extension/browser-history.js';
 import { capturePath } from '../extension/core.js';
 import { archiveFiles } from '../extension/archive.js';
@@ -117,4 +120,55 @@ test('URL export carries coverage, and history backup ZIP distinguishes current 
   assert.ok(files.some(file => file.name === 'delta-links.txt'));
   assert.match(files.find(file => file.name === 'index.txt').data, /Это текущий текст/);
   assert.equal(JSON.parse(files.find(file => file.name === 'report.json').data).entries[0].folder.startsWith('История/'), true);
+});
+
+
+test('history filename uses the browser-local last-visit day across the UTC midnight boundary', () => {
+  const moduleUrl = new URL('../extension/archive.js', import.meta.url).href;
+  const source = `
+    import {archiveFiles} from ${JSON.stringify(moduleUrl)};
+    const lastVisitTime = Date.parse('2026-10-09T21:30:00Z');
+    const files = await archiveFiles({source:'history',createdAt:'2030-01-01',entries:[{source:'history',url:'https://delta.yandex-team.ru/synthetic/night',captureId:'c',status:'captured',lastVisitTime}]},async()=>({text:'\\n== Ночная заметка\\nТело без изменений',samples:[]}));
+    console.log(JSON.stringify(files.filter(file=>file.name.startsWith('Чистые/'))));
+  `;
+  for (const [zone, day] of [['Europe/Moscow','2026-10-10'],['America/New_York','2026-10-09']]) {
+    const result = spawnSync(process.execPath, ['--input-type=module','-e',source], {env:{...process.env,TZ:zone},encoding:'utf8'});
+    assert.equal(result.status,0,result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout),[{name:`Чистые/${day} - == Ночная заметка.md`,data:'\n== Ночная заметка\nТело без изменений'}]);
+  }
+});
+
+test('dated history names deduplicate within a day, preserve separate days and leave tab filenames unchanged', async () => {
+  const times = [Date.parse('2026-10-09T12:00:00Z'),Date.parse('2026-10-09T12:00:00Z'),Date.parse('2026-10-10T12:00:00Z')];
+  const run = {source:'history',createdAt:'2030-01-01',entries:[
+    ...times.map((lastVisitTime,i)=>({url:`https://delta.yandex-team.ru/synthetic/${i}`,status:i===1?'timeout':'captured',captureId:`c${i}`,lastVisitTime})),
+    {source:'open_tabs',url:'https://delta.yandex-team.ru/synthetic/tab',status:'captured',captureId:'c3',lastVisitTime:times[0]}
+  ]};
+  const text='Первая строка\r\nТело **без изменений**\r\n';
+  const files=await archiveFiles(run,async id=>({text,samples:[],partial:id==='c1'}));
+  const day=time=>new Intl.DateTimeFormat('sv-SE',{year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(time));
+  const clean=files.filter(file=>file.name.startsWith('Чистые/'));
+  assert.deepEqual(clean.map(file=>file.name),[
+    `Чистые/${day(times[0])} - Первая строка.md`,
+    `Чистые/${day(times[0])} - Первая строка (2).md`,
+    `Чистые/${day(times[2])} - Первая строка.md`,
+    'Чистые/Первая строка.md'
+  ]);
+  assert.ok(clean.every(file=>file.data===text));
+  const report=JSON.parse(files.find(file=>file.name==='report.json').data);
+  assert.equal(report.entries[1].textFile.endsWith('/partial.txt'),true);
+  assert.ok(report.entries.every(entry=>entry.cleanTitle==='Первая строка'));
+  assert.equal(run.entries[0].cleanFile,undefined);
+  await writeFile(new URL('./history-dated-fixture.zip',import.meta.url),new Uint8Array(await createZip(files).arrayBuffer()));
+});
+
+test('missing or invalid last-visit dates never invent the backup creation date or epoch', async () => {
+  const invalid=[undefined,null,0,-1,NaN,Infinity,8640000000000001,'100'];
+  const run={source:'history',createdAt:'2030-01-01',entries:invalid.map((lastVisitTime,i)=>({captureId:`c${i}`,lastVisitTime,status:'captured'}))};
+  const files=await archiveFiles(run,async()=>({text:'Заметка\nИсходный текст',samples:[]}));
+  const clean=files.filter(file=>file.name.startsWith('Чистые/'));
+  assert.equal(clean.length,invalid.length);
+  assert.equal(new Set(clean.map(file=>file.name)).size,invalid.length);
+  assert.ok(clean.every(file=>file.name.startsWith('Чистые/Дата неизвестна - Заметка')));
+  assert.ok(clean.every(file=>file.data==='Заметка\nИсходный текст'));
 });

@@ -309,7 +309,7 @@ test('clean Markdown export is flat, includes unfinished saved text and preserve
   ] };
   const files = await archiveFiles(run, async id => captures.find(capture => capture.id === id));
   const clean = files.filter(file => file.name.startsWith('Чистые/'));
-  assert.deepEqual(clean.map(file => file.name), ['Чистые/== Заголовок Delta.md', 'Чистые/Заголовок истории.md', 'Чистые/Ожидание.md']);
+  assert.deepEqual(clean.map(file => file.name), ['Чистые/== Заголовок Delta.md', 'Чистые/Дата неизвестна - Заголовок истории.md', 'Чистые/Ожидание.md']);
   assert.deepEqual(clean.map(file => file.data), texts);
   assert.ok(clean.every(file => file.name.split('/').length === 2));
   const report = JSON.parse(files.find(file => file.name === 'report.json').data);

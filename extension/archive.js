@@ -1,9 +1,18 @@
 import { VERSION, capturePath, safeName, statusLabel, reasons } from './core.js';
 
-function cleanTextFile(text, fallbackTitle, usedNames) {
+function historyVisitDate(lastVisitTime) {
+  if (!Number.isFinite(lastVisitTime) || lastVisitTime <= 0) return 'Дата неизвестна';
+  const date = new Date(lastVisitTime);
+  const year = date.getFullYear();
+  if (!Number.isFinite(date.getTime()) || year > 9999) return 'Дата неизвестна';
+  // Use the same browser-local calendar day as the history list, not UTC.
+  return `${String(year).padStart(4, '0')}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function cleanTextFile(text, fallbackTitle, usedNames, datePrefix = '') {
   const title = String(text).split(/\r\n|\n|\r/).find(line => line.trim())?.trim() || fallbackTitle || 'Без названия';
-  // Match document titles without adding metadata or changing the saved source.
-  const base = safeName(title);
+  // The date affects only the filename; the first-line title and source stay intact.
+  const base = safeName(datePrefix ? `${datePrefix} - ${title}` : title);
   let name = `${base}.md`, number = 1;
   const key = value => value.normalize('NFC').toLowerCase();
   while (usedNames.has(key(name))) name = `${base} (${++number}).md`;
@@ -36,7 +45,8 @@ export async function archiveFiles(run, readCapture) {
         files.push({ name: `${folder}/snapshots/${String(i + 1).padStart(3, '0')}.txt`, data: capture.samples[i].text });
       }
       report.entries[index].textFile = `${folder}/${textFile}`;
-      const clean = cleanTextFile(capture.text, entry.title, usedCleanNames);
+      const fromHistory = (entry.source || run.source) === 'history';
+      const clean = cleanTextFile(capture.text, entry.title, usedCleanNames, fromHistory ? historyVisitDate(entry.lastVisitTime) : '');
       files.push({ name: clean.name, data: clean.data });
       report.entries[index].cleanFile = clean.name;
       report.entries[index].cleanTitle = clean.title;
