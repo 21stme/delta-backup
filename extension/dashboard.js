@@ -1,4 +1,5 @@
 import { isDelta, VERSION, statusLabel, reasons } from './core.js';
+import { entryState, pageCounts, filterEntries } from './ui-state.js';
 import { saveRun, readStore, listRuns } from './storage.js';
 import { captureTab, nextEntry, makeChromeAdapter } from './engine.js';
 import { archiveFiles } from './archive.js';
@@ -13,6 +14,11 @@ const api = makeChromeAdapter();
 const settingIds = ['timeout', 'stable', 'retries', 'maxReloads', 'concurrency', 'contentSelector', 'readySelector', 'loadingSelector'];
 let run;
 let working = false;
+let activity = 'idle';
+let sourceMode = 'open_tabs';
+let resultFilter = 'all';
+let searchQuery = '';
+const expandedRows = new Set();
 let pauseRequested = false;
 let detail = '';
 let persistRun = createRunWriter(saveRun, () => run);
@@ -49,67 +55,125 @@ function showSettings(settings) {
 }
 
 function updateControls() {
+  const counts = pageCounts(run?.entries);
+  const backupRunning = working && activity === 'backup';
+  const canResume = run && run.state !== 'finished' && nextEntry(run);
+  $('openSource').hidden = sourceMode !== 'open_tabs';
+  $('historySource').hidden = sourceMode !== 'history';
+  $('start').hidden = sourceMode !== 'open_tabs';
+  $('historyBackup').hidden = sourceMode !== 'history';
+  $('sourceTabs').setAttribute('aria-pressed', String(sourceMode === 'open_tabs'));
+  $('sourceHistory').setAttribute('aria-pressed', String(sourceMode === 'history'));
+  $('sourceTabs').disabled = $('sourceHistory').disabled = working;
   $('start').disabled = working;
+  $('restart').hidden = !run || working;
   $('restart').disabled = working || !run;
-  $('pause').disabled = !working || pauseRequested;
-  $('resume').disabled = working || !run || !nextEntry(run);
-  $('retryFailed').disabled = working || !run || !run.entries.some(entry => ['timeout', 'error'].includes(entry.status));
+  $('pause').hidden = !backupRunning;
+  $('pause').disabled = !backupRunning || pauseRequested;
+  $('pause').textContent = pauseRequested ? 'Завершаю шаг…' : 'Приостановить';
+  $('resume').hidden = working || !canResume;
+  $('resume').disabled = working || !canResume;
+  $('retryFailed').hidden = working || !counts.retryable;
+  $('retryFailed').disabled = working || !counts.retryable;
+  $('retryFailed').textContent = `Повторить неудачные · ${counts.retryable}`;
   $('export').disabled = working || !run;
-  $('history').disabled = working;
+  $('history').disabled = working || !run;
   $('groups').disabled = working;
   $('historyScan').disabled = working;
+  $('historyScan').hidden = scanningHistory;
+  $('historySearchStop').hidden = !scanningHistory;
   $('historySearchStop').disabled = !scanningHistory || cancelHistory;
   $('historyExport').disabled = working || !historyResult;
   $('historyBackup').disabled = working || !historyResult || !selectedHistory.size;
+  $('historyBackup').textContent = selectedHistory.size ? `Бэкап выбранных ссылок · ${selectedHistory.size}` : 'Бэкап выбранных ссылок';
+  $('historySelection').hidden = !historyResult?.links.length;
   $('historySelectAll').disabled = working || !historyResult?.links.length;
   $('historySelectNone').disabled = working || !selectedHistory.size;
   for (const id of ['historyRange', 'historyFrom', 'historyTo']) $(id).disabled = working;
   for (const checkbox of $('historyLinks').querySelectorAll('input')) checkbox.disabled = working;
-  if (scanningHistory) $('pause').disabled = true;
   for (const id of settingIds) $(id).disabled = working;
+  $('settingsSummary').textContent = `Ожидание ${$('timeout').value || '—'} с · Без изменений ${$('stable').value || '—'} с · Повторов ${$('retries').value || '0'} · Перезагрузок ${$('maxReloads').value || '0'}`;
+  for (const [id, value] of [['filterAll', 'all'], ['filterSaved', 'saved'], ['filterProblems', 'problems']]) {
+    $(id).disabled = !run;
+    $(id).setAttribute('aria-pressed', String(resultFilter === value));
+  }
+  $('resultSearch').disabled = !run;
+}
+
+function backupLabel(item) {
+  return `${new Date(item.createdAt).toLocaleString('ru-RU')} · ${item.source === 'history' ? 'из истории' : 'открытые вкладки'} · Страниц: ${item.entries.length} · Сохранено: ${item.entries.filter(e => e.status === 'captured').length}`;
 }
 
 function render(full = true) {
   updateControls();
-  if (!run) return;
-  const counts = { saved: 0, failed: 0, pending: 0, reading: 0 };
-  for (const entry of run.entries) {
-    if (entry.status === 'captured') counts.saved++;
-    else if (entry.status === 'waiting') counts.reading++;
-    else if (entry.status === 'pending') counts.pending++;
-    else counts.failed++;
+  $('emptyRun').hidden = Boolean(run);
+  $('runContent').hidden = !run;
+  if (!run) {
+    $('status').textContent = 'Начните первый бэкап';
+    return;
   }
-  $('status').textContent = scanningHistory ? 'Ищу ссылки Delta в истории' : working ? (pauseRequested ? 'Завершаю текущий шаг…' : 'Читаю страницы Delta') : run.state === 'finished' ? 'Обход завершён' : 'Бэкап приостановлен';
-  $('progress').textContent = `Найдено ${run.entries.length} · Сохранено ${counts.saved} · Ошибки/таймауты ${counts.failed} · Читается ${counts.reading} · В очереди ${counts.pending}${detail ? ' · ' + detail : ''}`;
+  const counts = pageCounts(run.entries);
+  const currentOption = [...$('history').options].find(option => option.value === run.id);
+  if (currentOption) currentOption.textContent = backupLabel(run);
+  $('runContext').textContent = `Бэкап · ${run.source === 'history' ? 'из истории' : 'открытые вкладки'} · ${new Date(run.createdAt).toLocaleString('ru-RU')}`;
+  $('status').textContent = activity === 'export' ? 'Готовлю ZIP' : activity === 'backup' ? (pauseRequested ? 'Завершаю текущий шаг…' : 'Читаю страницы Delta') : run.state === 'finished' ? 'Обход завершён' : 'Бэкап приостановлен';
+  for (const [id, field] of [['countSaved', 'saved'], ['countReading', 'reading'], ['countPending', 'pending'], ['countProblems', 'problems']]) {
+    $(id).textContent = counts[field].toLocaleString('ru-RU');
+    $(id).parentElement.classList.toggle('is-zero', counts[field] === 0);
+  }
+  $('progress').textContent = `Обработано ${counts.processed} из ${counts.total}`;
+  $('runTotal').textContent = `Страниц в бэкапе: ${counts.total}`;
+  $('runProgress').max = counts.total || 1;
+  $('runProgress').value = counts.processed;
+  $('liveDetails').hidden = activity !== 'backup' || !detail;
+  $('progressDetails').textContent = detail;
+  $('filterAll').textContent = `Все · ${counts.total}`;
+  $('filterSaved').textContent = `Сохранённые · ${counts.saved}`;
+  $('filterProblems').textContent = `Проблемы · ${counts.problems}`;
   if (!full) return;
+  const visible = filterEntries(run.entries, resultFilter, searchQuery);
+  $('filteredSummary').textContent = `Показано ${visible.length} из ${counts.total}`;
+  $('emptyResults').hidden = visible.length > 0;
   $('rows').replaceChildren();
-  for (const entry of run.entries) {
+  for (const entry of visible) {
     const row = document.createElement('tr');
     const name = document.createElement('td');
-    const title = document.createElement('div'); title.textContent = entry.title || 'Без названия'; name.append(title);
+    const title = document.createElement('div'); title.className = 'document-title'; title.textContent = entry.title || 'Без названия'; name.append(title);
     const metadata = document.createElement('small');
     metadata.textContent = entry.source === 'history' ? `Из истории · последний визит: ${entry.lastVisitTime ? new Date(entry.lastVisitTime).toLocaleString('ru-RU') : 'неизвестен'}` : `Окно ${entry.windowId} · ${entry.groupTitle || (entry.groupId < 0 ? 'Без группы' : 'Группа ' + entry.groupId)}`; name.append(metadata);
-    const url = document.createElement('small'); url.textContent = entry.url; name.append(url);
-    const status = document.createElement('td'); status.textContent = statusLabel(entry);
+    const rowDetails = document.createElement('details'); rowDetails.className = 'row-details';
+    const summary = document.createElement('summary'); summary.textContent = 'Адрес и детали';
+    const url = document.createElement('small'); url.className = 'document-url'; url.textContent = entry.url;
+    const attempts = document.createElement('small'); attempts.textContent = `Попыток: ${entry.attempts || 0} · Перезагрузок: ${entry.reloadEvents?.length || 0}`;
+    rowDetails.append(summary, url, attempts);
+    const key = `${run.id}/${entry.id || entry.tabId || entry.index}`;
+    rowDetails.open = expandedRows.has(key);
+    rowDetails.addEventListener('toggle', () => { if (rowDetails.open) expandedRows.add(key); else expandedRows.delete(key); });
+    name.append(rowDetails);
+    const status = document.createElement('td');
+    const badge = document.createElement('span'); badge.className = `status-badge ${entryState(entry)}`; badge.textContent = statusLabel(entry); status.append(badge);
     if (entry.reason) { const reason = document.createElement('small'); reason.textContent = reasons[entry.reason] || entry.reason; status.append(reason); }
     const importantWarnings = (entry.warnings || []).filter(warning => !['readiness_is_heuristic', 'editor_or_virtualized_content'].includes(warning) && !(warning === 'virtualized_content_unverified' && (entry.warnings || []).includes('ace_model_unavailable')));
     if (importantWarnings.length) {
-      const warning = document.createElement('small');
-      warning.textContent = importantWarnings.map(code => reasons[code] || code).join('; ');
-      status.append(warning);
+      const warning = document.createElement('small'); warning.textContent = importantWarnings.map(code => reasons[code] || code).join('; '); status.append(warning);
     }
-    const chars = document.createElement('td'); chars.textContent = entry.characters ? `${entry.characters.toLocaleString('ru')} симв.` : '—';
+    const chars = document.createElement('td'); chars.textContent = Number.isFinite(entry.characters) ? `${entry.characters.toLocaleString('ru-RU')} симв.` : '—';
     const review = document.createElement('td');
-    if (entry.source !== 'history' && Number.isInteger(entry.tabId)) {
-      const source = document.createElement('button'); source.textContent = 'Перейти на вкладку'; source.className = 'secondary';
-      source.addEventListener('click', () => goToOriginalTab(entry, chrome.tabs, chrome.windows).catch(fail)); review.append(source);
-    }
+    const actions = document.createElement('div'); actions.className = 'row-actions';
     if (entry.captureId) {
       const preview = document.createElement('button'); preview.textContent = 'Посмотреть'; preview.className = 'secondary';
-      preview.addEventListener('click', () => previewCapture(entry).catch(fail)); review.append(preview);
+      preview.addEventListener('click', () => previewCapture(entry).catch(fail)); actions.append(preview);
     }
-    row.append(name, status, chars, review); $('rows').append(row);
+    if (entry.source !== 'history' && Number.isInteger(entry.tabId)) {
+      const source = document.createElement('button'); source.textContent = 'Перейти на вкладку'; source.className = 'secondary';
+      source.addEventListener('click', () => goToOriginalTab(entry, chrome.tabs, chrome.windows).catch(fail)); actions.append(source);
+    }
+    review.append(actions); row.append(name, status, chars, review); $('rows').append(row);
   }
+}
+
+function resetResultView() {
+  resultFilter = 'all'; searchQuery = ''; $('resultSearch').value = ''; expandedRows.clear();
 }
 
 async function withLock(task) {
@@ -152,10 +216,11 @@ async function refreshHistory() {
   $('history').replaceChildren();
   for (const item of runs) {
     const option = document.createElement('option'); option.value = item.id;
-    option.textContent = `${new Date(item.createdAt).toLocaleString('ru-RU')} · ${item.source === 'history' ? 'из истории' : 'открытые вкладки'} · ${item.entries.length} страниц · ${item.entries.filter(e => e.status === 'captured').length} сохранено`;
+    option.textContent = backupLabel(item);
     $('history').append(option);
   }
   if (run) $('history').value = run.id;
+  if (!runs.length) { const option = document.createElement('option'); option.textContent = 'Бэкапов пока нет'; $('history').append(option); }
 }
 
 async function persistCapture(entry, outcome, final = false) {
@@ -216,7 +281,7 @@ async function runLoop() {
 
 async function begin(mode) {
   if (working) return;
-  $('error').textContent = ''; pauseRequested = false; working = true; updateControls();
+  $('error').textContent = ''; $('archiveStatus').textContent = ''; pauseRequested = false; working = true; activity = 'backup'; updateControls();
   try {
     await withLock(async () => {
       const settings = getSettings();
@@ -250,7 +315,8 @@ async function begin(mode) {
         // Interrupted attempts restart with the same retry allowance.
         for (const entry of run.entries) if (entry.status === 'waiting') { entry.status = 'pending'; entry.attempts = Math.max(0, entry.attempts - 1); }
       }
-      showSettings(run.settings); await runLoop();
+      if (['new', 'restart', 'history'].includes(mode)) resetResultView();
+      showSettings(run.settings); await refreshHistory(); await runLoop();
     });
   } catch (error) {
     fail(error);
@@ -261,7 +327,7 @@ async function begin(mode) {
       run.state = 'paused';
     }
   } finally {
-    working = false; detail = ''; render(); await refreshHistory().catch(fail);
+    working = false; activity = 'idle'; detail = ''; render(); await refreshHistory().catch(fail);
   }
 }
 
@@ -275,7 +341,7 @@ async function previewCapture(entry) {
 
 async function exportRun() {
   if (working || !run) return;
-  working = true; updateControls(); $('error').textContent = '';
+  working = true; activity = 'export'; render(false); $('error').textContent = '';
   try {
     await withLock(async () => {
       run = await readStore('runs', run.id);
@@ -284,7 +350,7 @@ async function exportRun() {
       await downloadFiles(files, `delta-${run.source === 'history' ? 'history-' : ''}backup-${stamp}.zip`);
     });
   } catch (error) { fail(error); }
-  finally { working = false; render(); }
+  finally { working = false; activity = 'idle'; render(); }
 }
 
 async function downloadFiles(files, filename, target = 'backup') {
@@ -300,6 +366,7 @@ async function downloadFiles(files, filename, target = 'backup') {
   if (download?.state === 'interrupted') throw new Error('Загрузка ZIP прервана или отменена. Повторите выгрузку.');
   detail = download?.state === 'complete' ? 'ZIP сохранён браузером.' : 'ZIP передан браузеру. Дождитесь завершения в списке загрузок.';
   if (target === 'history_links') $('historyDownloadStatus').textContent = detail;
+  else $('archiveStatus').textContent = detail;
 }
 const downloadUrls = new Map();
 
@@ -333,7 +400,7 @@ async function scanHistory() {
   // Request synchronously from this button's user gesture, before any awaited work.
   let permission;
   try { permission = chrome.permissions.request({ permissions: ['history'] }); } catch (error) { fail(error); return; }
-  working = true; scanningHistory = true; cancelHistory = false;
+  working = true; activity = 'scan'; scanningHistory = true; cancelHistory = false;
   historyResult = undefined; selectedHistory.clear(); renderHistoryLinks();
   $('historySummary').textContent = 'Ожидаю доступ к истории…';
   $('historyDownloadStatus').textContent = '';
@@ -347,7 +414,7 @@ async function scanHistory() {
     selectedHistory = new Set(historyResult.links.map(link => link.url));
     renderHistoryLinks();
   } catch (error) { $('historySummary').textContent = 'Поиск не выполнен. Смотрите сообщение об ошибке.'; fail(error); }
-  finally { working = false; scanningHistory = false; updateControls(); }
+  finally { working = false; activity = 'idle'; scanningHistory = false; updateControls(); }
 }
 
 async function exportHistoryLinks() {
@@ -367,7 +434,7 @@ chrome.downloads.onChanged.addListener(change => {
   if (change.state?.current === 'complete') {
     detail = 'ZIP сохранён браузером.';
     if (downloadTarget === 'history_links') $('historyDownloadStatus').textContent = detail;
-    else render(false);
+    else { $('archiveStatus').textContent = detail; render(false); }
   } else if (change.state?.current === 'interrupted') {
     fail(new Error('Загрузка ZIP прервана или отменена. Нажмите «Скачать ZIP» ещё раз.'));
   }
@@ -380,6 +447,15 @@ $('groups').addEventListener('click', async () => {
     $('groups').textContent = granted ? 'Названия групп разрешены' : 'Разрешение групп не выдано';
   } catch (error) { fail(error); }
 });
+$('settingsToggle').addEventListener('click', () => {
+  $('settingsPanel').hidden = !$('settingsPanel').hidden;
+  $('settingsToggle').setAttribute('aria-expanded', String(!$('settingsPanel').hidden));
+});
+$('sourceTabs').addEventListener('click', () => { sourceMode = 'open_tabs'; updateControls(); });
+$('sourceHistory').addEventListener('click', () => { sourceMode = 'history'; updateControls(); });
+for (const [id, filter] of [['filterAll', 'all'], ['filterSaved', 'saved'], ['filterProblems', 'problems']]) $(id).addEventListener('click', () => { resultFilter = filter; render(); });
+$('resultSearch').addEventListener('input', () => { searchQuery = $('resultSearch').value; render(); });
+for (const id of settingIds) $(id).addEventListener('input', updateControls);
 $('start').addEventListener('click', () => begin('new'));
 $('restart').addEventListener('click', () => begin('restart'));
 $('historyScan').addEventListener('click', scanHistory);
@@ -394,7 +470,7 @@ $('retryFailed').addEventListener('click', () => begin('retry'));
 $('pause').addEventListener('click', () => { pauseRequested = true; render(false); });
 $('export').addEventListener('click', exportRun);
 $('history').addEventListener('change', async () => {
-  try { run = await readStore('runs', $('history').value); showSettings(run.settings); detail = ''; render(); } catch (error) { fail(error); }
+  try { run = await readStore('runs', $('history').value); showSettings(run.settings); detail = ''; $('archiveStatus').textContent = ''; resetResultView(); render(); } catch (error) { fail(error); }
 });
 
 async function init() {

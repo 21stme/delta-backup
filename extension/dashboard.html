@@ -3,72 +3,63 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Бэкап вкладок Delta</title>
+  <title>Delta Backup</title>
   <link rel="stylesheet" href="dashboard.css">
   <link rel="icon" type="image/png" href="icons/icon32.png">
 </head>
 <body>
   <main>
-    <header><span class="badge">Локально · без AI</span><h1>Бэкап вкладок Delta</h1>
-    <p>Текст открытых вкладок или страниц из истории — в локальном ZIP. Чтение идёт в фоне, без переключения ваших вкладок. Эта вкладка управляет обходом: оставьте её открытой.</p></header>
-    <section class="card">
-      <h2>Настройки обхода</h2>
-      <div class="grid">
-        <label>Лимит ожидания одной страницы, секунд<input id="timeout" type="number" value="15" min="10" max="1800"><small class="hint">Лимит каждого ожидания: загрузка и пауза без изменений текста. После перезагрузки лимит начинается заново.</small></label>
-        <label>Текст не меняется, секунд<input id="stable" type="number" value="3" min="3" max="120"><small class="hint">После загрузки ждём столько секунд без изменений текста. Изменился — отсчёт начинается заново.</small></label>
-        <label>Повторов страниц с ошибкой или таймаутом<input id="retries" type="number" value="1" min="0" max="5"><small class="hint">После обхода всех страниц. 0 — без повторов; 1 — ещё одна попытка. Успешные страницы пропускаются.</small></label>
-        <label>Перезагрузок при затянувшейся загрузке или просьбе Delta<input id="maxReloads" type="number" value="3" min="0" max="5"><small class="hint">На одну попытку. После каждой перезагрузки начинается новый полный лимит ожидания.</small></label>
-        <label>Страниц одновременно<input id="concurrency" type="number" value="3" min="1" max="10"></label>
+    <header class="page-header">
+      <div class="brand"><img src="icons/icon48.png" width="48" height="48" alt=""><div><h1>Delta Backup</h1><p>Тексты Delta — в локальный ZIP.</p></div></div>
+      <span class="privacy-note">Локально · без отправки документов</span>
+    </header>
+    <section class="card launch-card" aria-labelledby="launchTitle">
+      <div class="section-heading"><h2 id="launchTitle">Новый бэкап</h2><button id="settingsToggle" class="secondary" aria-expanded="false" aria-controls="settingsPanel">Настройки</button></div>
+      <div class="source-tabs" role="group" aria-label="Источник нового бэкапа"><button id="sourceTabs" aria-pressed="true">Открытые вкладки</button><button id="sourceHistory" aria-pressed="false">История браузера</button></div>
+      <div id="openSource"><p class="source-description">Все открытые вкладки Delta в этом профиле, включая другие окна и группы.</p></div>
+      <div id="historySource" hidden>
+        <p class="source-description">Найдите ссылки и выберите документы. Сохраняется текущий текст, а не версия на дату визита.</p>
+        <div class="history-search"><label>Период истории<select id="historyRange"><option value="all">Вся доступная история</option><option value="7">Последние 7 дней</option><option value="30">Последние 30 дней</option><option value="90">Последние 90 дней</option><option value="custom">Свой период</option></select></label><button id="historyScan" class="secondary">Найти ссылки Delta</button><button id="historySearchStop" class="secondary" hidden disabled>Остановить поиск</button></div>
+        <div id="historyDates" class="grid" hidden><label>С даты<input id="historyFrom" type="date"></label><label>По дату включительно<input id="historyTo" type="date"></label></div>
+        <p id="historySummary" class="hint" role="status">Поиск ещё не запускался.</p>
+        <div id="historySelection" class="actions" hidden><button id="historySelectAll" class="text-button" disabled>Выбрать все</button><button id="historySelectNone" class="text-button" disabled>Снять выбор</button><button id="historyExport" class="text-button" disabled>Выгрузить список URL</button></div>
+        <div id="historyLinks" class="history-links"></div><p id="historyDownloadStatus" class="hint" role="status"></p>
+        <details class="compact-help"><summary>Доступ к истории</summary><p class="hint">При поиске браузер запрашивает доступ к истории профиля. Расширение сохраняет только ссылки точного домена delta.yandex-team.ru. Для открытых вкладок это разрешение не требуется.</p></details>
       </div>
-      <details><summary>Уточнить признаки готовности Delta</summary>
-        <p>Необязательно. CSS-селекторы проверяются на каждой странице. Неверный селектор приведёт к явной ошибке.</p>
-        <label>Основной текст<input id="contentSelector" placeholder="Например: main"></label>
-        <label>Видимый элемент готовой страницы<input id="readySelector" placeholder="Оставьте пустым, если неизвестен"></label>
-        <label>Индикатор загрузки<input id="loadingSelector" placeholder="Автоматические признаки + ваш селектор"></label>
-      </details>
-      <div class="actions">
+      <div class="launch-row"><label class="concurrency-field">Страниц одновременно<input id="concurrency" type="number" value="3" min="1" max="10"></label><div class="launch-action"><button id="start">Начать бэкап вкладок</button><button id="historyBackup" hidden disabled>Бэкап выбранных ссылок</button><span class="hint">Чтение идёт в фоне. Оставьте эту панель открытой.</span></div></div>
+      <p id="settingsSummary" class="settings-summary"></p>
+      <div id="settingsPanel" class="settings-panel" hidden>
+        <h3>Ожидание и восстановление</h3>
+        <p class="hint">Применяются при запуске, продолжении и повторе страниц.</p>
+        <div class="grid">
+          <label>Лимит ожидания одной страницы, секунд<input id="timeout" type="number" value="15" min="10" max="1800"><small>После перезагрузки начинается новый полный лимит.</small></label>
+          <label>Текст не меняется, секунд<input id="stable" type="number" value="3" min="3" max="120"><small>Пауза без изменений текста готовой страницы перед сохранением.</small></label>
+          <label>Повторов после первого прохода<input id="retries" type="number" value="1" min="0" max="5"><small>Только ошибки и таймауты. 0 — без повторов; 1 — ещё одна попытка.</small></label>
+          <label>Перезагрузок на попытку<input id="maxReloads" type="number" value="3" min="0" max="5"><small>При затянувшейся загрузке или просьбе Delta перезагрузить страницу.</small></label>
+        </div>
         <button id="groups" class="secondary">Разрешить чтение названий групп</button>
-        <button id="start">Бэкап открытых вкладок</button>
-        <button id="restart" class="secondary" disabled>Начать заново</button>
-        <button id="resume" class="secondary" disabled>Продолжить</button>
-        <button id="pause" class="secondary" disabled>Приостановить</button>
+        <p class="hint">Без этого разрешения сохраняются ID групп и окна. Чтение выполняется без прокрутки; свёрнутые блоки автоматически не раскрываются.</p>
+        <details><summary>Уточнить признаки готовности Delta</summary><p class="hint">Необязательные CSS-селекторы. Неверный селектор даст явную ошибку.</p><label>Основной текст<input id="contentSelector" placeholder="Например: main"></label><label>Видимый элемент готовой страницы<input id="readySelector" placeholder="Оставьте пустым, если неизвестен"></label><label>Индикатор загрузки<input id="loadingSelector" placeholder="Автоматические признаки + ваш селектор"></label></details>
       </div>
-      <p class="hint">«Начать заново» запускает новый бэкап без прежних снимков и попыток. Старый остаётся в истории. Для вкладок перечитывается текущий список Delta; для бэкапа истории — его выбранные ссылки.</p>
-      <p class="hint">Разрешение групп необязательно: без него сохраняются ID групп и окна. Выгруженные из памяти вкладки загружаются заново. При видимом сообщении «попробуйте перезагрузить страницу» выполняется перезагрузка в пределах настройки выше. Скрытый за кнопками или свёрнутыми блоками текст автоматически не открывается.</p>
     </section>
-    <section class="card">
-      <h2>Отдельная опция: Delta из истории браузера</h2>
-      <p>Найдите ссылки, выгрузите список URL или сохраните текущий текст выбранных страниц. История не содержит прошлые версии документов и названия прежних групп вкладок.</p>
-      <label>Период истории<select id="historyRange"><option value="all">Вся доступная история</option><option value="7">Последние 7 дней</option><option value="30">Последние 30 дней</option><option value="90">Последние 90 дней</option><option value="custom">Свой период</option></select></label>
-      <div id="historyDates" class="grid" hidden>
-        <label>С даты<input id="historyFrom" type="date"></label><label>По дату включительно<input id="historyTo" type="date"></label>
+    <p id="error" class="error" role="alert"></p>
+    <section class="card run-card" aria-labelledby="status">
+      <div class="section-heading"><div><p id="runContext" class="eyebrow">Результаты бэкапа</p><h2 id="status" role="status">Начните первый бэкап</h2></div><div class="actions"><button id="pause" class="secondary" hidden disabled>Приостановить</button><button id="resume" hidden disabled>Продолжить</button><button id="restart" class="secondary" hidden disabled title="Новый проход без прежних снимков. Старый бэкап останется в списке.">Начать заново</button></div></div>
+      <p id="emptyRun" class="hint">Выберите источник выше и запустите сохранение. Здесь появятся состояние и документы.</p>
+      <div id="runContent" hidden>
+        <div class="stats" aria-label="Состояние страниц"><div class="stat saved"><span>Сохранено</span><strong id="countSaved">0</strong></div><div class="stat reading"><span>Читается</span><strong id="countReading">0</strong></div><div class="stat"><span>В очереди</span><strong id="countPending">0</strong></div><div class="stat problems"><span>Проблемы</span><strong id="countProblems">0</strong></div></div>
+        <div class="progress-caption"><p id="progress" role="status"></p><span id="runTotal" class="hint"></span></div><progress id="runProgress" max="1" value="0" aria-label="Обработано страниц"></progress>
+        <details id="liveDetails" class="compact-help" hidden><summary>Подробности чтения</summary><p id="progressDetails" class="hint"></p></details>
+        <div class="results-toolbar"><div class="filter-tabs" role="group" aria-label="Фильтр результатов"><button id="filterAll" aria-pressed="true">Все</button><button id="filterSaved" aria-pressed="false">Сохранённые</button><button id="filterProblems" aria-pressed="false">Проблемы</button></div><input id="resultSearch" type="search" aria-label="Поиск по названию" placeholder="Найти документ…"></div>
+        <div class="results-summary"><span id="filteredSummary" class="hint" role="status"></span><button id="retryFailed" class="text-button" hidden disabled title="Повторить страницы с ошибкой или таймаутом. Успешные страницы пропускаются.">Повторить неудачные</button></div>
+        <div class="table-wrap"><table><thead><tr><th>Документ</th><th>Результат</th><th>Объём</th><th>Действия</th></tr></thead><tbody id="rows"></tbody></table></div>
+        <p id="emptyResults" class="empty-results" hidden>Нет документов по выбранному фильтру.</p>
       </div>
-      <div class="actions">
-        <button id="historyScan" class="secondary">Найти ссылки Delta</button>
-        <button id="historySearchStop" class="secondary" disabled>Остановить поиск</button>
-        <button id="historyExport" class="secondary" disabled>Выгрузить список URL</button>
-        <button id="historyBackup" disabled>Бэкап выбранных ссылок</button>
-      </div>
-      <p class="hint">При первом поиске браузер запросит доступ к истории. Это разрешение охватывает историю профиля; расширение ищет Delta и сохраняет только ссылки точного домена delta.yandex-team.ru. Разрешение не требуется для бэкапа открытых вкладок.</p>
-      <p id="historySummary" aria-live="polite">Поиск ещё не запускался.</p>
-      <p id="historyDownloadStatus" class="hint" aria-live="polite"></p>
-      <div class="actions"><button id="historySelectAll" class="secondary" disabled>Выбрать все</button><button id="historySelectNone" class="secondary" disabled>Снять выбор</button></div>
-      <div id="historyLinks" class="history-links"></div>
     </section>
-    <section class="card" aria-live="polite">
-      <h2 id="status">Готова к запуску</h2><p id="progress">Выберите бэкап открытых вкладок или отдельный режим истории.</p>
-      <div class="actions"><button id="retryFailed" class="secondary" disabled>Повторить неудачно сохранённые страницы</button></div>
-      <p class="hint">Поставить в очередь страницы с ошибкой или таймаутом. Сохранённые успешно страницы пропускаются. Доступно после завершения или паузы обхода.</p>
-      <p id="error" class="error" role="alert"></p>
-      <div class="table-wrap"><table><thead><tr><th>Вкладка / группа</th><th>Статус</th><th>Текст</th><th>Просмотр</th></tr></thead><tbody id="rows"></tbody></table></div>
-    </section>
-    <section class="card">
-      <h2>Предыдущие бэкапы</h2><p class="hint">Каждая вкладка сохраняется в локальную базу расширения сразу после чтения. Закрыли панель — откройте её снова и нажмите «Продолжить». Старые бэкапы доступны здесь; удаление расширения удалит и его базу.</p>
-      <div class="backup-export">
-        <select id="history" aria-label="Предыдущие бэкапы"></select>
-        <button id="export" class="secondary" disabled>Скачать ZIP</button>
-      </div>
-      <p class="hint">Архив выбранного бэкапа: сырые файлы и папка «Чистые» с текстами в .md. Названия файлов — первые непустые строки документов.</p>
+    <section class="card archive-card" aria-labelledby="archiveTitle">
+      <div class="section-heading"><h2 id="archiveTitle">Сохранённые бэкапы</h2><span class="hint">На этом устройстве</span></div>
+      <div class="backup-export"><select id="history" aria-label="Сохранённые бэкапы"></select><button id="export" disabled>Скачать ZIP</button></div>
+      <p id="archiveStatus" class="hint" role="status"></p><p class="hint">ZIP выбранного бэкапа: сырые снимки и папка «Чистые» с .md. Удаление расширения удалит локальную базу.</p>
     </section>
     <footer class="contact-card" aria-label="Delta Backup и обратная связь">
       <div class="contact-author">
@@ -79,7 +70,7 @@
         <a href="https://github.com/21stme/delta-backup" target="_blank" rel="noopener noreferrer">Исходники</a>
         <a href="https://github.com/21stme/delta-backup/issues/new/choose" target="_blank" rel="noopener noreferrer">Сообщить об ошибке <span aria-hidden="true">↗</span></a>
       </nav>
-      <span class="contact-version" id="extensionVersion">v1.4.2</span>
+      <span class="contact-version" id="extensionVersion">v1.5.0</span>
     </footer>
   </main>
   <script type="module" src="dashboard.js"></script>
