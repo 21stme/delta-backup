@@ -1,0 +1,19 @@
+{
+  "name": "delta-backup",
+  "version": "1.4.1",
+  "private": true,
+  "type": "module",
+  "description": "Локальный бэкап текста вкладок Delta",
+  "author": "21stme@",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/21stme/delta-backup.git"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "build": "python3 scripts/build.py"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

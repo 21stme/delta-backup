@@ -1,0 +1,12 @@
+# Generated archives and local backup data
+/dist/
+/node_modules/
+*.zip
+.DS_Store
+.env
+.env.*
+# Runtime data and local browser fixtures do not belong in this repository.
+/backups/
+/captures/
+/screenshots/
+/tests/*.png

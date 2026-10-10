@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Delta — локальный бэкап вкладок",
+  "version": "1.4.1",
+  "author": "21stme@",
+  "description": "Локальный бэкап открытых вкладок Delta или выбранных ссылок из истории браузера с ожиданием загрузки и отчётом.",
+  "permissions": ["tabs", "scripting", "downloads"],
+  "optional_permissions": ["tabGroups", "history"],
+  "host_permissions": ["https://delta.yandex-team.ru/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "Бэкап вкладок Delta" },
+  "content_security_policy": { "extension_pages": "script-src 'self'; object-src 'none'; connect-src 'none'" }
+}
