@@ -1,6 +1,6 @@
 # <img src="docs/images/icon.png" alt="" width="32" height="32"> Delta Backup
 
-Локальный бэкап текстов открытых вкладок [Delta](https://delta.yandex-team.ru/) для Яндекс Браузера и Google Chrome. Текущая версия: **1.6.0**.
+Сохраняет тексты [Delta](https://delta.yandex-team.ru/) из открытых вкладок и по ссылкам из истории браузера в локальные Markdown (`.md`) файлы внутри ZIP. Для Яндекс Браузера и Google Chrome. Текущая версия: **1.6.0**.
 
 ![Панель Delta Backup на синтетических данных](docs/images/dashboard.png)
 
